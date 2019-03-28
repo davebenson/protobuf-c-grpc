@@ -14,11 +14,27 @@ static EtcHostsEntry *etc_hosts_ipv4;
 static size_t n_etc_hosts_ipv6;
 static EtcHostsEntry *etc_hosts_ipv6;
 static bool pbc_grpc_dns_initialized = false;
+static int dns_fd = -1;
       
-typedef void (*PBC_GRPC_DNS_ResolveFunc)(PBC_GRPC_DNS_Result *result);
 
+typedef struct DNSTask DNSTask;
+struct DNSTask
+{
+  // links for the tree of sessions by id
+  DNSTask *sid_left, *sid_right, *sid_parent;
+  bool sid_is_red;
+
+  uint16_t session_id;
+
+  unsigned n_names;
+  char **names;
+
+  unsigned searchpath_index;
+};
+
+typedef void (*PBC_GRPC_DNS_ResolveFunc)(PBC_GRPC_DNS_Result *result);
 static void
-pbc_grpc_dns_init (PBC_GRPC_DNS_InitConfig *config)
+do_init (PBC_GRPC_DNS_InitConfig *config)
 {
   FILE *cp;
 
@@ -248,6 +264,7 @@ pbc_grpc_dns_init (PBC_GRPC_DNS_InitConfig *config)
             }
           fclose (fp);
         }
+    }
 
   if (!config->use_resolv_conf_searchpaths)
     {
@@ -266,13 +283,23 @@ pbc_grpc_dns_init (PBC_GRPC_DNS_InitConfig *config)
   if (config->use_ipv6_by_default)
     pbc_grpc_dns_resolver = pbc_grpc_dns_resolver_ipv6;
 
+  /* create a file-descriptor for sending and receiving DNS messages */
+  ...
+
+}
+
+void
+pbc_grpc_dns_init (PBC_GRPC_DNS_InitConfig *config)
+{
+  assert (!pbc_grpc_dns_initialized);
+  do_init (config);
   pbc_grpc_dns_initialized = true;
 }
 
 static void
 init_defaults (void)
 {
-  PBC_GRPC_DNS_InitConfig config = PBC_GRPC_DNS_INIT_CONFIG_INIT;
+  RBC_GRPC_DNS_InitConfig config = PBC_GRPC_DNS_INIT_CONFIG_INIT;
   pbc_grpc_dns_init (&config);
 }
 
@@ -280,7 +307,139 @@ struct BuiltinResolver
 {
   PBC_GRPC_DNS_Resolver base_instance;
   PBC_GRPC_DNS_AddressType address_type;
+
+  uint16_t next_session_id;
 };
+
+static bool
+allocate_id (BuiltinResolver *res, uint16_t *out, PBC_GRPC_Error **error)
+{
+  if (res->n_tasks == (1<<16))
+    {
+      *error = pbc_grpc_error_new ("too many active tasks");
+      return false;
+    }
+
+  for (;;)
+    {
+      uint16_t sid = res->next_session_id++;
+      DSKTask *out;
+      DSK_RBTREE_LOOKUP_COMPARATOR (GET_SESSION_ID_TREE (res),
+                                    sid, COMPARE_DSK_TASK_TO_SESSION_ID,
+                                    out);
+      if (out == NULL)
+        return sid;
+    }
+}
+
+static void
+pack_question (BuiltinResolver *res,
+               DNSTask         *task,
+               size_t          *msg_len_out,
+               uint8_t        **msg_data_out)
+{
+  DskDnsQuestion questions[1];
+  bool must_free_name = false;
+  if (task->n_names == 1)
+    {
+      if (searchpath_index == n_searchpath_entries)
+        {
+          questions[0].name = nname;
+        }
+      else
+        {
+          // concat searchpath with nname
+          ...
+          questions[0].name = nname;
+          must_free_name = true;
+        }
+    }
+  else
+    {
+      questions[0].name = task->names[task->n_names - 1];
+    }
+  questions[0].query_class = DSK_DNS_CLASS_IN;
+  switch (address_type) {
+    case PBC_GRPC_DNS_ADDRESS_TYPE_IPv4:
+      questions[0].query_type = DSK_DNS_RR_HOST_ADDRESS;
+      break;
+    case PBC_GRPC_DNS_ADDRESS_TYPE_IPv6:
+      questions[0].query_type = DSK_DNS_RR_HOST_ADDRESS_IPV6;
+      break;
+    default:
+      result.code = PBC_GRPC_DNS_ERROR_PERMANENT;
+      result.error = pbc_grpc_error_new ("address-type invalid");
+      result.data = data;
+      func (&result);
+      pbc_grpc_error_unref (result.error);
+      free (nname);
+      return;
+  }
+
+  memset (&message, 0, sizeof (message);
+  message->n_questions = 1;
+  message->questions = questions;
+  message->id = session_id;
+  message->is_query = 1;
+  message->recursion_desired = 1;
+  message->opcode = DSK_DNS_OP_QUERY;
+
+  *msg_data_out = pbc_grpc_dsk_dns_message_serialize (message, msg_len_out);
+
+  if (must_free_name)
+    free ((void *) questions[0].name);
+}
+
+static void
+ask_question_or_terminate (BuiltinResolver *res,
+                           DNSTask         *task)
+{
+  /* trap readable */
+  if (!dns_fd_is_trapped)
+    {
+      ...ZZ
+    }
+
+  const char *name = compute_name (res, task, &must_free_name);
+
+  EtcHostsEntry *entry = lookup_etc_hosts_entry (name);
+  if (entry != NULL)
+    {
+      PBC_GRPC_DNS_Result result;
+      result.code = PBC_GRPC_DNS_SUCCESS;
+      result.success....
+      result.ttl = ETC_HOSTS_TTL;
+      result.data = task->data;
+      task->func (&result);
+      free_task (res, task);
+      if (must_free_name)
+        free ((char *) name);
+      return;
+    }
+
+  pack_question (builtin_resolver, task, &qlen, &qdata);
+  ssize_t send_rv = sendto (dns_fd, qdata, qlen, 0, /* flags */
+                            &dst, dst_len);
+  if (send_rv < 0)
+    {
+      if (errno == EINTR)
+        goto retry;
+      // should EAGAIN trigger a queuing operation?
+    }
+  else if (send_rv < qlen)
+    {
+      // partial write.  treat as permanent error?
+      PBC_GRPC_DNS_Result result;
+      result.code = PBC_GRPC_DNS_ERROR_PERMANENT;
+      result.error = pbc_grpc_error_new ("partial write to UDP socket");
+      result.data = task->data;
+      task->func (&result);
+    }
+  else
+    {
+      // success!
+    }
+}
 
 static void
 builtin_resolver_resolve (PBC_GRPC_DNS_Resolver     *resolver,
@@ -292,68 +451,51 @@ builtin_resolver_resolve (PBC_GRPC_DNS_Resolver     *resolver,
   BuiltinResolver *builtin_resolver = (BuiltinResolver *) resolver;
   PBC_GRPC_DNS_AddressType address_type = builtin_resolver->address_type;
   PBC_GRPC_DskDnsMessage message;
-  if (pbc_grpc_dns_initialized)
+  PBC_GRPC_Error *error;
+  PBC_GRPC_DNS_Result result;
+
+  if (!pbc_grpc_dns_initialized)
     init_defaults ();
-  char *nname = normalize_name (name);
+
+  char *nname = normalize_name (name, &use_searchpath);
   if (nname == NULL)
     {
-      error = pbc_grpc_error_new (...);
-      func (...);
-      pbc_grpc_error_unref (error);
+      result.code = PBC_GRPC_DNS_ERROR_PERMANENT;
+      result.error = pbc_grpc_error_new ("name invalid");
+      result.data = data;
+      func (&result);
+      pbc_grpc_error_unref (result.error);
       return;
     }
 
-  DskDnsQuestion questions[1];
-  questions[0].name = nname;
-  questions[0].query_class = DSK_DNS_CLASS_IN;
-  switch (address_type) {
-    case PBC_GRPC_DNS_ADDRESS_TYPE_IPv4:
-      questions[0].query_type = DSK_DNS_RR_HOST_ADDRESS;
-      break;
-    case PBC_GRPC_DNS_ADDRESS_TYPE_IPv6:
-      questions[0].query_type = DSK_DNS_RR_HOST_ADDRESS_IPV6;
-      break;
-    default:
-      error = pbc_grpc_error_new (...);
-      func (...);
-      pbc_grpc_error_unref (error);
+  uint16_t session_id;
+  if (!allocate_id (builtin_resolver, &session_id, &result.error))
+    {
+      result.code = PBC_GRPC_DNS_ERROR_PERMANENT;
+      result.data = data;
+      func (&result);
+      pbc_grpc_error_unref (result.error);
       return;
-  }
-
-
-  uint16_t session_id = allocate_id (builtin_resolver);
-  memset (&message, 0, sizeof (message);
-  message->n_questions = 1;
-  message->questions = questions;
-  message->id = session_id;
-  message->is_query = 1;
-  message->recursion_desired = 1;
-  message->opcode = DSK_DNS_OP_QUERY;
+    }
 
   DNSTask *task = NEW (DNSTask);
   task->session_id = session_id;
-  task->name = ...;
-  DSK_RBTREE_INSERT (GET_TASK_TREE (builtin_resolver), task);
+  task->n_names = 1;
+  task->names = NEW_ARRAY (char *, 1);
+  task->names[0] = nname;
+  task->searchpath_index = use_searchpath ? 0 : n_searchpath_entries;
+  DSK_RBTREE_INSERT (GET_SESSION_ID_TREE (builtin_resolver), task);
 
-  /* create a file-descriptor for sending and receiving DNS messages */
-  ...
+  task->overall_timer = pbc_grpc_dispatch_add_timer (dispatch, ...);
 
-  /* trap readable */
-  ...ZZ
-
-  pbc_grpc_dispatch_add_timer (...);
-
-  unsigned message_length;
-  uint8_t *message_binary = pbc_grpc_dsk_dns_message_serialize (message, &message_length);
-  sendto (...);
-
+  ask_question_or_terminate (builtin_resolver, task);
 }
 
 static BuiltinResolver pbc_grpc_dns_resolver_instance = {
   { builtin_resolver_resolve },
   PBC_GRPC_DNS_ADDRESS_TYPE_IPv4
 };
-PBC_GRPC_DNS_Resolver *pbc_grpc_dns_resolver = (PBC_GRPC_DNS_Resolver *) &pbc_grpc_dns_resolver_instance;
+PBC_GRPC_DNS_Resolver *pbc_grpc_dns_resolver_ipv4 = (PBC_GRPC_DNS_Resolver *) &pbc_grpc_dns_resolver_instance;
 
 static BuiltinResolver pbc_grpc_dns_resolver_instance = {
   { builtin_resolver_resolve },
@@ -361,10 +503,5 @@ static BuiltinResolver pbc_grpc_dns_resolver_instance = {
 };
 PBC_GRPC_DNS_Resolver *pbc_grpc_dns_resolver_ipv6 = (PBC_GRPC_DNS_Resolver *) &pbc_grpc_dns_resolver_ipv6_instance;
 
+PBC_GRPC_DNS_Resolver *pbc_grpc_dns_resolver = (PBC_GRPC_DNS_Resolver *) &pbc_grpc_dns_resolver_instance;
 
-/* By default, these fields will be set when the
- * DNS resolver is first used, by parsing /etc/resolv.conf,
- * but if you set them first, then we will use your settings.
- */
-extern size_t pbc_grpc_dns_n_nameservers;
-extern struct PBC_GRPC_DNS_Address *pbc_grpc_dns_nameservers;
