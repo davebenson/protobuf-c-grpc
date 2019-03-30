@@ -29,9 +29,9 @@
 #ifndef __PROTOBUF_C_RPC_RPC_DISPATCH_H_
 #define __PROTOBUF_C_RPC_RPC_DISPATCH_H_
 
-typedef struct _PBC_GRPC_Dispatch PBC_GRPCDispatch;
-typedef struct _PBC_GRPC_DispatchTimer PBC_GRPCDispatchTimer;
-typedef struct _PBC_GRPC_DispatchIdle PBC_GRPCDispatchIdle;
+typedef struct _PBC_GRPC_Dispatch PBC_GRPC_Dispatch;
+typedef struct _PBC_GRPC_DispatchTimer PBC_GRPC_DispatchTimer;
+typedef struct _PBC_GRPC_DispatchIdle PBC_GRPC_DispatchIdle;
 
 #include <protobuf-c/protobuf-c.h>
 
@@ -42,36 +42,34 @@ typedef enum
 } PBC_GRPC_Events;
 
 #ifdef WIN32
-typedef SOCKET ProtobufC_RPC_FD;
+typedef SOCKET PBC_GRPC_FD;
 #else
-typedef int ProtobufC_RPC_FD;
+typedef int PBC_GRPC_FD;
 #endif
 
 /* Create or destroy a _Dispatch */
-PBC_GRPC_Dispatch  *pbc_grpc_dispatch_new (ProtobufCAllocator *allocator);
+PBC_GRPC_Dispatch  *pbc_grpc_dispatch_new (void);
 void                pbc_grpc_dispatch_free(PBC_GRPC_Dispatch *dispatch);
 
 PBC_GRPC_Dispatch  *pbc_grpc_dispatch_default (void);
 
-ProtobufCAllocator *pbc_grpc_dispatch_peek_allocator (PBC_GRPC_Dispatch *);
-
-typedef void (*PBC_GRPC_DispatchCallback)  (ProtobufC_RPC_FD   fd,
+typedef void (*PBC_GRPC_DispatchCallback)  (PBC_GRPC_FD   fd,
                                             unsigned       events,
                                             void          *callback_data);
 
 /* Registering file-descriptors to watch. */
 void  pbc_grpc_dispatch_watch_fd (PBC_GRPC_Dispatch *dispatch,
-                                    ProtobufC_RPC_FD        fd,
+                                    PBC_GRPC_FD        fd,
                                     unsigned            events,
                                     PBC_GRPC_DispatchCallback callback,
                                     void               *callback_data);
 void  pbc_grpc_dispatch_close_fd (PBC_GRPC_Dispatch *dispatch,
-                                    ProtobufC_RPC_FD        fd);
+                                    PBC_GRPC_FD        fd);
 void  pbc_grpc_dispatch_fd_closed(PBC_GRPC_Dispatch *dispatch,
-                                    ProtobufC_RPC_FD        fd);
+                                    PBC_GRPC_FD        fd);
 
 /* Timers */
-typedef void (*PBC_GRPC_DispatchTimerFunc) (PBC_GRPCDispatch *dispatch,
+typedef void (*PBC_GRPC_DispatchTimerFunc) (PBC_GRPC_Dispatch *dispatch,
                                             void              *func_data);
 PBC_GRPC_DispatchTimer *
       pbc_grpc_dispatch_add_timer(PBC_GRPC_Dispatch *dispatch,
@@ -80,7 +78,7 @@ PBC_GRPC_DispatchTimer *
                                     PBC_GRPC_DispatchTimerFunc func,
                                     void               *func_data);
 PBC_GRPC_DispatchTimer *
-      PBC_GRPC_dispatch_add_timer_millis
+      pbc_grpc_dispatch_add_timer_millis
                                    (PBC_GRPC_Dispatch *dispatch,
                                     unsigned           milliseconds,
                                     PBC_GRPC_DispatchTimerFunc func,
@@ -88,13 +86,13 @@ PBC_GRPC_DispatchTimer *
 void  pbc_grpc_dispatch_remove_timer (PBC_GRPC_DispatchTimer *);
 
 /* Idle functions */
-typedef void (*PBC_GRPC_DispatchIdleFunc)   (PBC_GRPCDispatch *dispatch,
+typedef void (*PBC_GRPC_DispatchIdleFunc)   (PBC_GRPC_Dispatch *dispatch,
                                              void               *func_data);
 PBC_GRPC_DispatchIdle *
-      PBC_GRPC_dispatch_add_idle (PBC_GRPC_Dispatch *dispatch,
+      pbc_grpc_dispatch_add_idle (PBC_GRPC_Dispatch *dispatch,
                                     PBC_GRPC_DispatchIdleFunc func,
                                     void               *func_data);
-void  PBC_GRPC_dispatch_remove_idle (PBC_GRPC_DispatchIdle *);
+void  pbc_grpc_dispatch_remove_idle (PBC_GRPC_DispatchIdle *);
 
 /* --- API for use in standalone application --- */
 /* Where you are happy just to run poll(2). */
@@ -103,25 +101,25 @@ void  PBC_GRPC_dispatch_remove_idle (PBC_GRPC_DispatchIdle *);
  * Run one main-loop iteration, using poll(2) (or some system-level event system);
  * 'timeout' is in milliseconds, -1 for no timeout.
  */
-void  PBC_GRPC_dispatch_run      (PBC_GRPC_Dispatch *dispatch);
+void  pbc_grpc_dispatch_run      (PBC_GRPC_Dispatch *dispatch);
 
 
 /* --- API for those who want to embed a dispatch into their own main-loop --- */
 typedef struct {
-  ProtobufC_RPC_FD fd;
-  ProtobufC_RPC_Events events;
+  PBC_GRPC_FD fd;
+  PBC_GRPC_Events events;
 } ProtobufC_RPC_FDNotify;
 
 typedef struct {
-  ProtobufC_RPC_FD fd;
-  ProtobufC_RPC_Events old_events;
-  ProtobufC_RPC_Events events;
+  PBC_GRPC_FD fd;
+  PBC_GRPC_Events old_events;
+  PBC_GRPC_Events events;
 } ProtobufC_RPC_FDNotifyChange;
 
-void  PBC_GRPC_dispatch_dispatch (PBC_GRPC_Dispatch *dispatch,
+void  pbc_grpc_dispatch_dispatch (PBC_GRPC_Dispatch *dispatch,
                                     size_t              n_notifies,
                                     ProtobufC_RPC_FDNotify *notifies);
-void  PBC_GRPC_dispatch_clear_changes (PBC_GRPC_Dispatch *);
+void  pbc_grpc_dispatch_clear_changes (PBC_GRPC_Dispatch *);
 
 
 struct _PBC_GRPC_Dispatch
@@ -151,6 +149,6 @@ struct _PBC_GRPC_Dispatch
   /* private data follows (see Real_Dispatch structure in .c file) */
 };
 
-void PBC_GRPC_dispatch_destroy_default (void);
+void pbc_grpc_dispatch_destroy_default (void);
 
 #endif

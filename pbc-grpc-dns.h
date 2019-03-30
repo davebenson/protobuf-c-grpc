@@ -1,4 +1,11 @@
+#ifndef PBC_GRPC_DNS_INCLUDED_
+#define PBC_GRPC_DNS_INCLUDED_
+
+#include "pbc-grpc.h"
+
 #define PBC_GRPC_DNS_PORT 53
+
+typedef struct PBC_GRPC_DNS_Resolver PBC_GRPC_DNS_Resolver ;
 
 /* DNS only handles IPv4 and IPv6 addresses. */
 typedef enum {
@@ -103,3 +110,5 @@ typedef struct {
   }
 
 void pbc_grpc_dns_init (PBC_GRPC_DNS_InitConfig *config);
+
+#endif
