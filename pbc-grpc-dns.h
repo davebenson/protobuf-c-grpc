@@ -21,6 +21,9 @@ typedef struct {
   uint8_t addr[16];
 } PBC_GRPC_DNS_Address;
 
+bool pbc_grpc_dns_is_numeric (const char *hostname,
+                              PBC_GRPC_DNS_Address *out);
+
 /* Basic result of a lookup. */
 typedef enum PBC_GRPC_DNS_ResultCode
 { 

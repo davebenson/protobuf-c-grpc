@@ -1,25 +1,15 @@
 #ifndef __PBC_GRPC_H_
 #define __PBC_GRPC_H_
 
-typedef struct PBC_GRPC_Error PBC_GRPC_Error;
 typedef struct PBC_GRPC_Client PBC_GRPC_Client;
 typedef struct PBC_GRPC_Server PBC_GRPC_Server;
 
 typedef struct PBC_GRPC_Client_New_Options PBC_GRPC_Client_New_Options;
 
-#include <stdbool.h>
-#include <stdint.h>
+#include "pbc-grpc-common.h"
+#include "pbc-grpc-error.h"
 #include "pbc-grpc-dispatch.h"
 #include "pbc-grpc-dns.h"
-
-struct PBC_GRPC_Error
-{
-  unsigned ref_count;
-  char *message;
-};
-PBC_GRPC_Error *pbc_grpc_error_new   (const char     *message);
-PBC_GRPC_Error *pbc_grpc_error_ref   (PBC_GRPC_Error *error);
-void            pbc_grpc_error_unref (PBC_GRPC_Error *error);
 
 struct PBC_GRPC_Client_New_Options
 {

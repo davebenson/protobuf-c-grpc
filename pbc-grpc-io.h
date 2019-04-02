@@ -5,12 +5,15 @@
  * we also do not allow partial shutdown.
  */
 
+#include "pbc-grpc-common.h"
+#include "pbc-grpc-dispatch.h"
+
 typedef enum
 {
   PBC_GRPC_IO_RESULT_SUCCESS,
   PBC_GRPC_IO_RESULT_PARTIAL,
-  PBC_GRPC_IO_RESULT_AGAIN,
-  PBC_GRPC_IO_RESULT_CLOSED,
+  PBC_GRPC_IO_RESULT_WOULD_BLOCK,
+  PBC_GRPC_IO_RESULT_EOF,
   PBC_GRPC_IO_RESULT_ERROR
 } PBC_GRPC_IO_ResultCode;
 
@@ -25,8 +28,13 @@ typedef struct {
 
 typedef struct PBC_GRPC_IO PBC_GRPC_IO;
 typedef struct PBC_GRPC_IO_Class PBC_GRPC_IO_Class;
+typedef struct PBC_GRPC_IO_Listener PBC_GRPC_IO_Listener;
+typedef struct PBC_GRPC_IO_Timer PBC_GRPC_IO_Timer;
+typedef struct PBC_GRPC_IO_SSLContext PBC_GRPC_IO_SSLContext;
+typedef struct PBC_GRPC_IOSystem PBC_GRPC_IOSystem;
 
 typedef void (*PBC_GRPC_IOFunc)(PBC_GRPC_IO *io, void *callback_data);
+typedef void (*PBC_GRPC_IOErrorFunc)(PBC_GRPC_IO *io, PBC_GRPC_Error *error, void *callback_data);
 
 struct PBC_GRPC_IO_Class
 {
@@ -54,6 +62,13 @@ struct PBC_GRPC_IO
   PBC_GRPC_IO_Class *io_class;
 };
 
+typedef void (*PBC_GRPC_IO_AcceptFunc) (PBC_GRPC_IO_Listener *listener,
+                                        PBC_GRPC_IO          *connection,
+                                        void                 *func_data);
+          
+
+                  
+
 struct PBC_GRPC_IO_Listener
 {
   void (*set_backlog_size) (PBC_GRPC_IO_Listener *,
@@ -64,10 +79,51 @@ struct PBC_GRPC_IO_Listener
   void (*destroy)          (PBC_GRPC_IO_Listener *listener);
 };
 
+typedef void (*PBC_GRPC_IO_TimerFunc)(void *timer_data);
 struct PBC_GRPC_IO_Timer
 {
   void (*cancel)(PBC_GRPC_IO_Timer *timer);
 };
+
+struct PBC_GRPC_IO_SSLContext
+{
+  PBC_GRPC_IOSystem *io_system;
+};
+
+/*
+ * Options to provide to create a new client connection (unencrypted)
+ */
+typedef struct {
+  /* Connecting to IP addresses, either directly or via DNS. */
+  const char *hostname;
+  bool use_ip_address;
+  PBC_GRPC_IPAddress ip_address;
+  int port;
+
+  const char *unix_domain_socket;
+} PBC_GRPC_IO_ClientOptions;
+
+typedef struct {
+  int port;
+  int backlog_length;
+  const char *unix_domain_socket;
+} PBC_GRPC_IO_ServerOptions;
+
+typedef struct {
+  const char     *cert_filename;
+  const char     *key_filename;
+  const char     *password;
+} PBC_GRPC_IO_SSLContextOptions;
+
+typedef struct {
+  PBC_GRPC_IO_ClientOptions raw;
+  PBC_GRPC_IO_SSLContext *ssl_context;
+} PBC_GRPC_IO_SSLClientOptions;
+
+typedef struct {
+  PBC_GRPC_IO_ServerOptions raw;
+  PBC_GRPC_IO_SSLContext *ssl_context;
+} PBC_GRPC_IO_SSLServerOptions;
 
 struct PBC_GRPC_IOSystem
 {
@@ -77,6 +133,11 @@ struct PBC_GRPC_IOSystem
   PBC_GRPC_IO_Listener *
                (*new_server)           (PBC_GRPC_IOSystem *system,
                                         PBC_GRPC_IO_ServerOptions *options,
+                                        PBC_GRPC_Error **error);
+
+  PBC_GRPC_IO_SSLContext *
+               (*new_ssl_context)      (PBC_GRPC_IOSystem *system,
+                                        PBC_GRPC_IO_SSLContextOptions *options,
                                         PBC_GRPC_Error **error);
 
   PBC_GRPC_IO *(*new_ssl_client)       (PBC_GRPC_IOSystem *system,
@@ -90,7 +151,7 @@ struct PBC_GRPC_IOSystem
   PBC_GRPC_IO_Timer *(*new_timer)      (PBC_GRPC_IOSystem *system,
                                         uint64_t microseconds,
                                         PBC_GRPC_IO_TimerFunc func,
-                                        void                 *func_data);
+                                        void                 *timer_data);
 };
 
 extern PBC_GRPC_IOSystem * pbc_grpc_io_system;
