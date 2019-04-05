@@ -43,6 +43,7 @@ struct PBC_GRPC_IO_Class
                                    PBC_GRPC_IOFunc readable,
                                    PBC_GRPC_IOFunc writable,
                                    PBC_GRPC_IOErrorFunc error,
+                                   PBC_GRPC_IOFunc destroyed,
                                    void           *callback_data);
   PBC_GRPC_IO_Result (*read)      (PBC_GRPC_IO    *io,
                                    size_t          size,
@@ -50,7 +51,10 @@ struct PBC_GRPC_IO_Class
   PBC_GRPC_IO_Result (*write)     (PBC_GRPC_IO    *io,
                                    size_t          size,
                                    const uint8_t  *data);
-  void               (*destroy)   (PBC_GRPC_IO *io);
+  void               (*close)     (PBC_GRPC_IO *io);
+
+  /* This should NOT be called directly; instead use pbc_grpc_io_unref() */
+  void               (*finalize)  (PBC_GRPC_IO *io);
 
 
   // optional functions
@@ -60,24 +64,73 @@ struct PBC_GRPC_IO_Class
 struct PBC_GRPC_IO
 {
   PBC_GRPC_IO_Class *io_class;
+  PBC_GRPC_IOSystem *io_system;
+  unsigned ref_count;
+  PBC_GRPC_Error *last_error;
 };
 
+PBC_GRPC_IO      * pbc_grpc_io_ref        (PBC_GRPC_IO    *io);
+void               pbc_grpc_io_unref      (PBC_GRPC_IO    *io);
+void               pbc_grpc_io_set_wants  (PBC_GRPC_IO    *io,
+                                           PBC_GRPC_IOFunc readable,
+                                           PBC_GRPC_IOFunc writable,
+                                           PBC_GRPC_IOErrorFunc error,
+                                           PBC_GRPC_IOFunc destroyed,
+                                           void           *callback_data);
+PBC_GRPC_IO_Result pbc_grpc_io_read       (PBC_GRPC_IO    *io,
+                                           size_t          size,
+                                           uint8_t        *data);
+PBC_GRPC_IO_Result pbc_grpc_io_write      (PBC_GRPC_IO    *io,
+                                           size_t          size,
+                                           const uint8_t  *data);
+void               pbc_grpc_io_close      (PBC_GRPC_IO    *io);
+char *             pbc_grpc_io_status_as_string (PBC_GRPC_IO *io);
+
+
 typedef void (*PBC_GRPC_IO_AcceptFunc) (PBC_GRPC_IO_Listener *listener,
-                                        PBC_GRPC_IO          *connection,
                                         void                 *func_data);
           
+typedef enum
+{
+  PBC_GRPC_IO_ACCEPT_RESULT_SUCCESS,
+  PBC_GRPC_IO_ACCEPT_RESULT_WOULD_BLOCK,
+  PBC_GRPC_IO_ACCEPT_RESULT_ERROR
+} PBC_GRPC_IO_AcceptResultCode;
+typedef struct PBC_GRPC_IO_AcceptResult PBC_GRPC_IO_AcceptResult;
+struct PBC_GRPC_IO_AcceptResult
+{
+  PBC_GRPC_IO_AcceptResultCode code;
+  union {
+    struct {
+      PBC_GRPC_IO *connection;
+    } success;
+    PBC_GRPC_Error *error;
+  };
+};
 
+
+  
                   
 
 struct PBC_GRPC_IO_Listener
 {
-  void (*set_backlog_size) (PBC_GRPC_IO_Listener *,
-                            int backlog_size);
   void (*set_handler)      (PBC_GRPC_IO_Listener *,
                             PBC_GRPC_IO_AcceptFunc func,
                             void *func_data);
-  void (*destroy)          (PBC_GRPC_IO_Listener *listener);
+  PBC_GRPC_IO_AcceptResult
+       (*accept)           (PBC_GRPC_IO_Listener *);
+  void (*close)            (PBC_GRPC_IO_Listener *listener);
+  void (*finalize)         (PBC_GRPC_IO_Listener *listener);
+  PBC_GRPC_IOSystem *io_system;
+  unsigned ref_count;
 };
+void pbc_grpc_io_listener_set_handler(PBC_GRPC_IO_Listener *listener,
+                                      PBC_GRPC_IO_AcceptFunc func,
+                                      void *func_data);
+PBC_GRPC_IO_AcceptResult
+     pbc_grpc_io_listener_accept     (PBC_GRPC_IO_Listener *listener);
+void pbc_grpc_io_listener_close      (PBC_GRPC_IO_Listener *listener);
+void pbc_grpc_io_listener_finalize   (PBC_GRPC_IO_Listener *listener);
 
 typedef void (*PBC_GRPC_IO_TimerFunc)(void *timer_data);
 struct PBC_GRPC_IO_Timer
@@ -153,6 +206,36 @@ struct PBC_GRPC_IOSystem
                                         PBC_GRPC_IO_TimerFunc func,
                                         void                 *timer_data);
 };
+
+
+PBC_GRPC_IO *
+pbc_grpc_io_system_new_client        (PBC_GRPC_IOSystem *system,
+                                      PBC_GRPC_IO_ClientOptions *options,
+                                      PBC_GRPC_Error **error);
+PBC_GRPC_IO_Listener *
+pbc_grpc_io_system_new_server        (PBC_GRPC_IOSystem *system,
+                                      PBC_GRPC_IO_ServerOptions *options,
+                                      PBC_GRPC_Error **error);
+
+PBC_GRPC_IO_SSLContext *
+pbc_grpc_io_system_new_ssl_context   (PBC_GRPC_IOSystem *system,
+                                      PBC_GRPC_IO_SSLContextOptions *options,
+                                      PBC_GRPC_Error **error);
+
+PBC_GRPC_IO *
+pbc_grpc_io_system_new_ssl_client    (PBC_GRPC_IOSystem *system,
+                                      PBC_GRPC_IO_SSLClientOptions *options,
+                                      PBC_GRPC_Error **error);
+PBC_GRPC_IO_Listener *
+pbc_grpc_io_system_new_ssl_server    (PBC_GRPC_IOSystem *system,
+                                      PBC_GRPC_IO_SSLServerOptions *options,
+                                      PBC_GRPC_Error **error);
+
+PBC_GRPC_IO_Timer *
+pbc_grpc_io_system_new_timer         (PBC_GRPC_IOSystem *system,
+                                      uint64_t microseconds,
+                                      PBC_GRPC_IO_TimerFunc func,
+                                      void                 *timer_data);
 
 extern PBC_GRPC_IOSystem * pbc_grpc_io_system;
 

@@ -22,4 +22,6 @@ PBC_GRPC_Error *pbc_grpc_error_new_printf (const char *format, ...);
 PBC_GRPC_Error *pbc_grpc_error_ref   (PBC_GRPC_Error *error);
 void            pbc_grpc_error_unref (PBC_GRPC_Error *error);
 
+
+char *pbc_grpc_strdup_printf (const char *format, ...);
 #endif
